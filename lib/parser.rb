@@ -6,15 +6,12 @@ require 'fileutils'
 module PEL
   class Parser
 
-    # Lock the file and begin processing.
-    #
-    # @params [String] path file path
     def initialize(path)
       CONFIG[:log].info "Processing path: #{path}"
       done_file_path = "#{path}.tmp"
       PEL.lock("#{path}") do
         current_line = 1
-        start_line = 1
+        start_line = 0
         if File.exists?(done_file_path)
           start_line = `wc -l #{done_file_path}`.to_i
         end
@@ -23,25 +20,23 @@ module PEL
         done_file.sync = true
         File.open(path).each_line do |line|
           # Skip already processed lines
-          if current_line < start_line
-            continue
-          end
-
-          event = PEL.decode_string(line)
-          if event
-            # On error keep retrying
-            if !process_event(event)
-              backoff = [1, 1, 1, 1, 1, 2, 2, 2, 3] + PEL.exp_backoff(6)
-              s = backoff.shift
-              while !process_event(event)
-                sleep s
-                if backoff.size > 1
-                  s = backoff.shift
+          if current_line > start_line
+            event = PEL.decode_string(line)
+            if event
+              # On error keep retrying
+              if !process_event(event)
+                backoff = [1, 1, 1, 1, 1, 2, 2, 2, 3] + PEL.exp_backoff(6)
+                s = backoff.shift
+                while !process_event(event)
+                  sleep s
+                  if backoff.size > 1
+                    s = backoff.shift
+                  end
                 end
               end
+              done_file.write line
+              sleep CONFIG[:throttle_parse]
             end
-            done_file.write line
-            sleep CONFIG[:throttle_parse]
           end
           current_line += 1
         end
